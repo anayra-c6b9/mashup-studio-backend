@@ -57,7 +57,6 @@ func (m *Manager) JoinRoom(code string) (*Room, error) {
 		return nil, errors.New("room not found")
 	}
 
-	room.Join()
 	return room, nil
 }
 

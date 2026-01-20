@@ -8,6 +8,7 @@ import (
 	"strings"
 	"os/signal"
 	"time"
+	"path/filepath"
 
 	"anayra-c6b9.net/mashupstudio/internal/middleware"
 	"anayra-c6b9.net/mashupstudio/internal/rooms"
@@ -23,11 +24,13 @@ func (app *application) routes() http.Handler {
 
 	mux.HandleFunc("/api/rooms/create", roomHandler.CreateRoom)
 	mux.HandleFunc("/api/rooms/join", roomHandler.JoinRoom)
+	mux.HandleFunc("/api/library", handlers.Library)
+	mux.Handle("/music/", app.musicHandler())
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("OK"))
 	})
 
-	wsHandler := websocket.NewRoomWS(app.rooms)
+	wsHandler := websocket.NewRoomWS(app.rooms, app.infoLog)
 	mux.HandleFunc("/ws/room", wsHandler.Handle)
 
 
@@ -49,7 +52,12 @@ func (app *application) routes() http.Handler {
 		http.ServeFile(w, r, "./ui/build/index.html")
 	}))
 
-	return middleware.LogRequest(app.infoLog, mux)
+	handler := middleware.LogRequest(app.infoLog, mux)
+	handler = middleware.CORS(handler)
+
+	return handler
+
+	// return middleware.LogRequest(app.infoLog, mux)
 }
 
 
@@ -58,6 +66,33 @@ type application struct {
 	errorLog *log.Logger
 	rooms    *rooms.Manager
 }
+
+func (app *application) musicHandler() http.Handler {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		app.errorLog.Println("cannot get home dir:", err)
+		// fallback: no music
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "music storage not configured", http.StatusInternalServerError)
+		})
+	}
+
+	musicDir := filepath.Join(home, "music-store") // expands ~/music-store safely
+	fs := http.FileServer(http.Dir(musicDir))
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Strong caching hints (Cloudflare can honor these with cache rules)
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+
+		// Range requests: Go will handle Range automatically for files
+		// but this header makes intent explicit
+		w.Header().Set("Accept-Ranges", "bytes")
+
+		// Serve /music/* from ~/music-store/*
+		http.StripPrefix("/music/", fs).ServeHTTP(w, r)
+	})
+}
+
 
 func main() {
 	infoLog := log.New(os.Stdout, "INFO\t", log.Ldate|log.Ltime)
@@ -75,7 +110,7 @@ func main() {
 	}
 
 	go func() {
-		app.infoLog.Println("Starting Mashup Studio server on :5000")
+		app.infoLog.Println("Starting Mashup Studio server on :5500")
 		err := srv.ListenAndServe()
 		if err != nil && err != http.ErrServerClosed {
 			app.errorLog.Fatal(err)
