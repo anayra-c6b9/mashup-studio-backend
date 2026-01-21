@@ -113,6 +113,13 @@ func (ws *RoomWS) Handle(w http.ResponseWriter, r *http.Request) {
 
 			queue := room.AddToQueue(tid)
 
+			room.Broadcast(nil, map[string]interface{}{
+				"type": "queue_add",
+				"payload": map[string]interface{}{
+					"trackId": tid,
+				},
+			})
+
 			// broadcast updated queue to everyone
 			room.Broadcast(nil, map[string]interface{}{
 				"type": "queue",
